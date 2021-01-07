@@ -4,19 +4,28 @@ import cv2.cv2 as cv2
 from imutils.video import FPS
 import argparse
 import time
+import pyimgur
+
+from linebot import LineBotApi
+from linebot.exceptions import LineBotApiError
+from linebot.models import TextSendMessage, TemplateSendMessage, ButtonsTemplate, URITemplateAction, MessageAction,URIAction
 
 # use index 1 for mac camera
-cap = cv2.VideoCapture(0) 
-
-
+CLIENT_ID = "9a1eb3a795e1769"
+cap = cv2.VideoCapture(0)
+line_bot_api = LineBotApi(
+    "Km9P5RE6SlCa+BXIfzbrZWJRCw/ITBvHIirRrFQohlTUlyDNllG/iFCZMvDySJKXSjOc29JKRcMT7m3ViMKILBeEy95RTlfkEhbijaIv9HgFXXJcD14GE0Q3C332UW2BRk1cV6u+y1Pr6L1l0AFLQQdB04t89/1O/w1cDnyilFU=")
+alertMessage = TemplateSendMessage(
+    alt_text='收到警訊，請盡速查看！',
+)
 # construct the argument parse and parse the arguments
 ap = argparse.ArgumentParser()
 ap.add_argument("-y", "--yolo", required=True,
-	help="base path to YOLO directory")
+                help="base path to YOLO directory")
 ap.add_argument("-c", "--confidence", type=float, default=0.5,
-	help="minimum probability to filter weak detections")
+                help="minimum probability to filter weak detections")
 ap.add_argument("-t", "--threshold", type=float, default=0.3,
-	help="threshold when applyong non-maxima suppression")
+                help="threshold when applyong non-maxima suppression")
 args = vars(ap.parse_args())
 
 # load the COCO class labels our YOLO model was trained on
@@ -25,7 +34,7 @@ LABELS = open(labelsPath).read().strip().split("\n")
 
 # initialize a list of colors to represent each possible class label
 np.random.seed(42)
-COLORS = [[0,255,0],[0,0,255]]
+COLORS = [[0, 255, 0], [0, 0, 255]]
 
 # derive the paths to the YOLO weights and model configuration
 weightsPath = os.path.sep.join([args["yolo"], "yolo.weights"])
@@ -34,13 +43,14 @@ configPath = os.path.sep.join([args["yolo"], "yolo.cfg"])
 # load our YOLO object detector trained on COCO dataset (80 classes)
 print("[INFO] loading YOLO from disk...")
 net = cv2.dnn.readNetFromDarknet(configPath, weightsPath)
-next_frame_towait=5 #for sms
+next_frame_towait = 5  # for sms
 fps = FPS().start()
+
 while(True):
     # Capture frame-by-frame
     ret, frame = cap.read()
 
-    #DETECTION WITH YOLO
+    # DETECTION WITH YOLO
     # load our input image and grab its spatial dimensions
     (H, W) = frame.shape[:2]
 
@@ -52,7 +62,7 @@ while(True):
     # pass of the YOLO object detector, giving us our bounding boxes and
     # associated probabilities
     blob = cv2.dnn.blobFromImage(frame, 1 / 255.0, (416, 416),
-        swapRB=True, crop=False)
+                                 swapRB=True, crop=False)
     net.setInput(blob)
     start = time.time()
     layerOutputs = net.forward(ln)
@@ -66,7 +76,6 @@ while(True):
     boxes = []
     confidences = []
     classIDs = []
-
 
     # loop over each of the layer outputs
     for output in layerOutputs:
@@ -103,38 +112,47 @@ while(True):
     # boxes
     idxs = cv2.dnn.NMSBoxes(boxes, confidences, args["confidence"],
                             args["threshold"])
-    border_size=100
-    border_text_color=[255,255,255]
-    frame = cv2.copyMakeBorder(frame, border_size,0,0,0, cv2.BORDER_CONSTANT)
-    filtered_classids=np.take(classIDs,idxs)
-    mask_count=(filtered_classids==0).sum()
-    nomask_count=(filtered_classids==1).sum()
-    #display count
+    border_size = 100
+    border_text_color = [255, 255, 255]
+    frame = cv2.copyMakeBorder(
+        frame, border_size, 0, 0, 0, cv2.BORDER_CONSTANT)
+    filtered_classids = np.take(classIDs, idxs)
+    mask_count = (filtered_classids == 0).sum()
+    nomask_count = (filtered_classids == 1).sum()
+    # display count
     text = "NoMaskCount: {}  MaskCount: {}".format(nomask_count, mask_count)
-    cv2.putText(frame,text, (0, int(border_size-50)), cv2.FONT_HERSHEY_SIMPLEX,0.65,border_text_color, 2)
-    #display status
+    cv2.putText(frame, text, (0, int(border_size-50)),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.65, border_text_color, 2)
+    # display status
     text = "Status:"
-    cv2.putText(frame,text, (W-200, int(border_size-50)), cv2.FONT_HERSHEY_SIMPLEX,0.65,border_text_color, 2)
-    ratio=nomask_count/(mask_count+nomask_count+0.000001)
+    cv2.putText(frame, text, (W-200, int(border_size-50)),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.65, border_text_color, 2)
+    ratio = nomask_count/(mask_count+nomask_count+0.000001)
 
-    
-    if ratio>=0.1 and nomask_count>=3:
+    if ratio >= 0.1 and nomask_count >= 3:
         text = "Danger !"
-        cv2.putText(frame,text, (W-100, int(border_size-50)), cv2.FONT_HERSHEY_SIMPLEX,0.65,[26,13,247], 2)
-        if fps._numFrames>=next_frame_towait: #to send danger sms again,only after skipping few seconds
+        cv2.putText(frame, text, (W-100, int(border_size-50)),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.65, [26, 13, 247], 2)
+        if fps._numFrames >= next_frame_towait:  # to send danger sms again,only after skipping few seconds
             print('Sms sent')
-            next_frame_towait=fps._numFrames+(5*25)
-        
-    elif ratio!=0 and np.isnan(ratio)!=True:
+            next_frame_towait = fps._numFrames+(5*25)
+
+    elif ratio != 0 and np.isnan(ratio) != True:
         text = "Warning !"
-        cv2.putText(frame,text, (W-100, int(border_size-50)), cv2.FONT_HERSHEY_SIMPLEX,0.65,[0,255,255], 2)
-        if fps._numFrames>=next_frame_towait: #to send danger sms again,only after skipping few seconds
-            print('SB bot!!!!!')
-            next_frame_towait=fps._numFrames+(5*25)
+        cv2.putText(frame, text, (W-100, int(border_size-50)),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.65, [0, 255, 255], 2)
+        if fps._numFrames >= next_frame_towait:
+            cv2.imwrite("frame.jpg", frame)
+            im = pyimgur.Imgur(CLIENT_ID)
+            uploaded_image = im.upload_image("frame.jpg", title="face mask")
+            line_bot_api.multicast(['Uc24e58dfda24ad2591c83b870ec2611c', 'Ue1d5af8b8fba08c330817068a28601d1', 'Ubbf393c10d9b0d15fcf692f899e014f6'], TemplateSendMessage(alt_text='Warning msg!', template=ButtonsTemplate(
+                title='警示預警', thumbnail_image_url=str(uploaded_image.link), text="有 "+str(nomask_count)+" 個人沒戴口罩", actions=[URIAction(label='統計報表', uri='https://line.me')])))
+            next_frame_towait = fps._numFrames+(5*25)
 
     else:
         text = "Safe "
-        cv2.putText(frame,text, (W-100, int(border_size-50)), cv2.FONT_HERSHEY_SIMPLEX,0.65,[0,255,0], 2)
+        cv2.putText(frame, text, (W-100, int(border_size-50)),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.65, [0, 255, 0], 2)
     # ensure at least one detection exists
     if len(idxs) > 0:
         # loop over the indexes we are keeping
@@ -148,10 +166,10 @@ while(True):
             cv2.rectangle(frame, (x, y), (x + w, y + h), color, 2)
             text = "{}: {:.4f}".format(LABELS[classIDs[i]], confidences[i])
             cv2.putText(frame, text, (x, y - 5), cv2.FONT_HERSHEY_SIMPLEX,
-                0.5, color, 2)
+                        0.5, color, 2)
 
     # Display the resulting frame
-    cv2.imshow('frame',frame)
+    cv2.imshow('frame', frame)
     fps.update()
     if cv2.waitKey(1) & 0xFF == ord('q'):
         break
